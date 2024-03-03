@@ -1,0 +1,108 @@
+---
+# docs:
+#   - https://argo-cd.readthedocs.io/en/stable/operator-manual/declarative-setup/
+#   - https://github.com/argoproj/argo-cd/blob/master/docs/operator-manual/application.yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: workflow-argo-workflows
+  namespace: argo-cd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: workflow
+  destination:
+    name: ''
+    namespace: workflow
+    server: 'https://kubernetes.default.svc'
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: false
+    syncOptions:
+      - CreateNamespace=true
+  source:
+    path: ''
+    repoURL: 'https://argoproj.github.io/argo-helm'
+    targetRevision: 0.39.9
+    chart: argo-workflows
+    helm:
+      values: |
+        workflow:
+          namespace: workflow
+        controller:
+          workflowNamespaces:
+            - workflow
+        server:
+          enabled: true
+          secure: true
+          extraArgs:
+            - --basehref
+            - "/argo/"
+          extraEnv:
+            - name: BASE_HREF
+              value: "/argo/"
+          authModes:
+            - server
+            # - sso
+          serviceType: ClusterIP
+          servicePort: 2746
+          servicePortName: https
+          # https://argo-workflows.readthedocs.io/en/latest/argo-server/#ingress
+          ingress:
+            enabled: true
+            annotations:
+              kubernetes.io/ingress.class: nginx
+              nginx.ingress.kubernetes.io/use-regex: "true"
+              nginx.ingress.kubernetes.io/rewrite-target: /$2
+              nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+              ingress.kubernetes.io/protocol: https # Traefik
+              nginx.ingress.kubernetes.io/backend-protocol: https # ingress-nginx
+            ingressClassName: nginx
+            extraPaths:
+              - path: /argo(/|$)(.*)
+                pathType: ImplementationSpecific
+                backend:
+                  service:
+                    name: argo-workflows-server
+                    port:
+                      name: https
+          sso:
+            enabled: false
+            issuer: http://mysticstorage.local:8080/realms/devops
+            clientId:
+              name: argo-server-sso
+              key: client-id
+            clientSecret:
+              name: argo-server-sso
+              key: client-secret
+            redirectUrl: https://mint.local/argo/oauth2/callback
+            rbac:
+              enabled: true
+            scopes:
+              - openid
+              - profile
+              - roles
+            customGroupClaimName: roles
+            userInfoPath: /protocol/openid-connect/userinfo
+            insecureSkipVerify: true
+            filterGroupsRegex:
+              - "argo-workflows.*"
+        extraObjects:
+          - apiVersion: v1
+            kind: Secret
+            metadata:
+              name: argo-server-sso
+            type: Opaque
+            stringData:
+              client-id: argo-workflows
+              client-secret: JPxJ7YzBYAsl8uelN86Wv3gS72OY2p3x
+          - apiVersion: v1
+            kind: ConfigMap
+            metadata:
+              name: proxy-env-mp
+            data:
+              TZ: Asia/Tokyo
+              http_proxy: ""
+              https_proxy: ""
+              no_proxy: ""
