@@ -41,7 +41,7 @@ spec:
                 pathType: Prefix
                 backend:
                   service:
-                    name: jenkins
+                    name: workflow-jenkins
                     port:
                       name: http
           installPlugins:

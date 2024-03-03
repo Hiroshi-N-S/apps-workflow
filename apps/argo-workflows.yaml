@@ -64,7 +64,7 @@ spec:
                 pathType: ImplementationSpecific
                 backend:
                   service:
-                    name: argo-workflows-server
+                    name: workflow-argo-workflows-server
                     port:
                       name: https
           sso:
