@@ -29,7 +29,9 @@ spec:
     helm:
       values: |
         workflow:
-          namespace: workflow
+          serviceAccount:
+            create: true
+            name: "argo-workflow"
         controller:
           workflowNamespaces:
             - workflow
