@@ -31,10 +31,23 @@ spec:
         workflow:
           serviceAccount:
             create: true
-            name: "argo-workflow"
+            name: "argo-workflows"
         controller:
           workflowNamespaces:
             - workflow
+          persistence:
+            archive: true
+            mysql:
+              host: workflow-argo-workflows-mysql-server
+              port: 3306
+              database: argo
+              tableName: argo_workflows 
+              userNameSecret:
+                name: argo-mysql-secret
+                key: username
+              passwordSecret:
+                name: argo-mysql-secret
+                key: password
         server:
           enabled: true
           secure: true
@@ -92,14 +105,6 @@ spec:
               - "argo-workflows.*"
         extraObjects:
           - apiVersion: v1
-            kind: Secret
-            metadata:
-              name: argo-server-sso
-            type: Opaque
-            stringData:
-              client-id: argo-workflows
-              client-secret: JPxJ7YzBYAsl8uelN86Wv3gS72OY2p3x
-          - apiVersion: v1
             kind: ConfigMap
             metadata:
               name: proxy-env-mp
@@ -108,3 +113,106 @@ spec:
               http_proxy: ""
               https_proxy: ""
               no_proxy: ""
+          - apiVersion: v1
+            kind: Secret
+            metadata:
+              name: argo-server-sso
+            type: Opaque
+            stringData:
+              client-id: argo-workflows
+              client-secret: JPxJ7YzBYAsl8uelN86Wv3gS72OY2p3x
+          - apiVersion: v1
+            kind: Secret
+            metadata:
+              name: argo-mysql-secret
+            type: Opaque
+            stringData:
+              username: argo
+              password: Argo-Workflows
+          # --- --- --- --- --- --- --- --- ---
+          # MySQL Server
+          - apiVersion: v1
+            kind: ConfigMap
+            metadata:
+              name: mysql-cnf-mp
+            data:
+              mysql.cnf: ''
+          - apiVersion: v1
+            kind: Service
+            metadata:
+              name: workflow-argo-workflows-mysql-server
+              labels:
+                app.kubernetes.io/component: server
+                app.kubernetes.io/instance: mysql-server
+            spec:
+              selector:
+                app.kubernetes.io/component: server
+                app.kubernetes.io/instance: mysql-server
+              type: ClusterIP
+              ports:
+                - name: mysql
+                  port: 3306
+                  protocol: TCP
+                  targetPort: mysql
+                  nodePort: null
+          - apiVersion: apps/v1
+            kind: StatefulSet
+            metadata:
+              name: workflow-argo-workflows-mysql-server
+              labels:
+                app.kubernetes.io/component: server
+                app.kubernetes.io/instance: mysql-server
+            spec:
+              serviceName: mysql-server
+              replicas: 1
+              updateStrategy:
+                type: RollingUpdate
+              selector:
+                matchLabels:
+                  app.kubernetes.io/component: server
+                  app.kubernetes.io/instance: mysql-server
+              template:
+                metadata:
+                  labels:
+                    app.kubernetes.io/component: server
+                    app.kubernetes.io/instance: mysql-server
+                spec:
+                  containers:
+                    - name: mysql
+                      image: amd64/mysql:8.0.35-bullseye
+                      args:
+                        - --character-set-server=utf8mb4
+                        - --collation-server=utf8mb4_unicode_ci
+                      env:
+                        - name: MYSQL_ROOT_PASSWORD
+                          value: MySQL12345
+                        - name: MYSQL_DATABASE
+                          value: argo
+                        - name: MYSQL_USER
+                          value: argo
+                        - name: MYSQL_PASSWORD
+                          value: Argo-Workflows
+                      ports:
+                        - name: mysql
+                          containerPort: 3306
+                      volumeMounts:
+                        - name: mysql-cnf-vol
+                          mountPath: /etc/mysql/conf.d/mysql.cnf
+                          subPath: mysql.cnf
+                        - name: data
+                          mountPath: /var/lib/mysql
+                  volumes:
+                    - name: mysql-cnf-vol
+                      configMap:
+                        name: mysql-cnf-mp
+                        items:
+                          - key: mysql.cnf
+                            path: mysql.cnf
+              volumeClaimTemplates:
+                - metadata:
+                    name: data
+                  spec:
+                    accessModes: [ "ReadWriteOnce" ]
+                    resources:
+                      requests:
+                        storage: 4Gi
