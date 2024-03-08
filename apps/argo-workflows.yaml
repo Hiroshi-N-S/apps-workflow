@@ -44,10 +44,10 @@ spec:
               tableName: argo_workflows 
               userNameSecret:
                 name: argo-mysql-secret
-                key: username
+                key: MYSQL_USER
               passwordSecret:
                 name: argo-mysql-secret
-                key: password
+                key: MYSQL_PASSWORD
         server:
           enabled: true
           secure: true
@@ -121,16 +121,18 @@ spec:
             stringData:
               client-id: argo-workflows
               client-secret: JPxJ7YzBYAsl8uelN86Wv3gS72OY2p3x
+          # --- --- --- --- --- --- --- --- ---
+          # MySQL Server
+          #
           - apiVersion: v1
             kind: Secret
             metadata:
               name: argo-mysql-secret
             type: Opaque
             stringData:
-              username: argo
-              password: Argo-Workflows
-          # --- --- --- --- --- --- --- --- ---
-          # MySQL Server
+              MYSQL_DATABASE: argo
+              MYSQL_USER: argo
+              MYSQL_PASSWORD: Argo-Workflows
           - apiVersion: v1
             kind: ConfigMap
             metadata:
@@ -186,12 +188,9 @@ spec:
                       env:
                         - name: MYSQL_ROOT_PASSWORD
                           value: MySQL12345
-                        - name: MYSQL_DATABASE
-                          value: argo
-                        - name: MYSQL_USER
-                          value: argo
-                        - name: MYSQL_PASSWORD
-                          value: Argo-Workflows
+                      envFrom:
+                        - secretRef:
+                            name: argo-mysql-secret
                       ports:
                         - name: mysql
                           containerPort: 3306
@@ -212,7 +211,9 @@ spec:
                 - metadata:
                     name: data
                   spec:
-                    accessModes: [ "ReadWriteOnce" ]
                     resources:
                       requests:
                         storage: 4Gi
+                    accessModes:
+                      - ReadWriteOnce
+                    persistentVolumeReclaimPolicy: Recycle
