@@ -1,0 +1,25 @@
+---
+# docs:
+#   - https://argo-cd.readthedocs.io/en/stable/operator-manual/declarative-setup/
+#   - https://github.com/argoproj/argo-cd/blob/master/docs/operator-manual/application.yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: workflow-resources
+  namespace: argo-cd
+spec:
+  project: workflow
+  destination:
+    name: ''
+    namespace: workflow
+    server: 'https://kubernetes.default.svc'
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: false
+    syncOptions:
+      - CreateNamespace=true
+  source:
+    path: resources
+    repoURL: 'https://github.com/Hiroshi-N-S/apps-workflow.git'
+    targetRevision: main

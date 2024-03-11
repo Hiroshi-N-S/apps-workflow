@@ -1,0 +1,310 @@
+---
+# docs:
+#   - https://argo-cd.readthedocs.io/en/stable/operator-manual/declarative-setup/
+#   - https://github.com/argoproj/argo-cd/blob/master/docs/operator-manual/application.yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: workflow-argo-workflows
+  namespace: argo-cd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: workflow
+  destination:
+    name: ''
+    namespace: workflow
+    server: 'https://kubernetes.default.svc'
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: false
+    syncOptions:
+      - CreateNamespace=true
+  source:
+    path: ''
+    repoURL: 'https://argoproj.github.io/argo-helm'
+    targetRevision: 0.39.9
+    chart: argo-workflows
+    helm:
+      values: |
+        workflow:
+          serviceAccount:
+            create: true
+            name: "argo-workflows"
+        controller:
+          workflowNamespaces:
+            - workflow
+          persistence:
+            archive: true
+            mysql:
+              host: workflow-argo-workflows-mysql-server
+              port: 3306
+              database: argo
+              tableName: argo_workflows 
+              userNameSecret:
+                name: argo-mysql-secret
+                key: MYSQL_USER
+              passwordSecret:
+                name: argo-mysql-secret
+                key: MYSQL_PASSWORD
+        server:
+          enabled: true
+          secure: true
+          extraArgs:
+            - --basehref
+            - "/argo/"
+          extraEnv:
+            - name: BASE_HREF
+              value: "/argo/"
+          authModes:
+            - server
+            # - sso
+          serviceType: ClusterIP
+          servicePort: 2746
+          servicePortName: https
+          # https://argo-workflows.readthedocs.io/en/latest/argo-server/#ingress
+          ingress:
+            enabled: true
+            annotations:
+              kubernetes.io/ingress.class: nginx
+              nginx.ingress.kubernetes.io/use-regex: "true"
+              nginx.ingress.kubernetes.io/rewrite-target: /$2
+              nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+              ingress.kubernetes.io/protocol: https # Traefik
+              nginx.ingress.kubernetes.io/backend-protocol: https # ingress-nginx
+            ingressClassName: nginx
+            extraPaths:
+              - path: /argo(/|$)(.*)
+                pathType: ImplementationSpecific
+                backend:
+                  service:
+                    name: workflow-argo-workflows-server
+                    port:
+                      name: https
+          sso:
+            enabled: false
+            issuer: http://mysticstorage.local:8080/realms/devops
+            clientId:
+              name: argo-server-sso
+              key: client-id
+            clientSecret:
+              name: argo-server-sso
+              key: client-secret
+            redirectUrl: https://mint.local/argo/oauth2/callback
+            rbac:
+              enabled: true
+            scopes:
+              - openid
+              - profile
+              - roles
+            customGroupClaimName: roles
+            userInfoPath: /protocol/openid-connect/userinfo
+            insecureSkipVerify: true
+            filterGroupsRegex:
+              - "argo-workflows.*"
+        useStaticCredentials: true
+        artifactRepository:
+          # -- Archive the main container logs as an artifact
+          archiveLogs: true
+          # -- Store artifact in a S3-compliant object store
+          # @default -- See [values.yaml]
+          s3:
+            # Note the `key` attribute is not the actual secret, it's the PATH to
+            # the contents in the associated secret, as defined by the `name` attribute.
+            accessKeySecret:
+              name: minio-env-secret
+              key: AWS_ACCESS_KEY_ID
+            secretKeySecret:
+              name: minio-env-secret
+              key: AWS_SECRET_ACCESS_KEY
+            # insecure will disable TLS. Primarily used for minio installs not configured with TLS
+            insecure: true
+            bucket: argo-workflows
+            endpoint: mysticstorage.local:9000
+            # region:
+            # roleARN:
+            # useSDKCreds: true
+            # encryptionOptions:
+        extraObjects:
+          - apiVersion: v1
+            kind: ConfigMap
+            metadata:
+              name: proxy-env-mp
+            data:
+              TZ: Asia/Tokyo
+              http_proxy: ""
+              https_proxy: ""
+              no_proxy: ""
+
+          # --- --- --- --- --- --- --- --- ---
+          # secret for sso
+          #
+          - apiVersion: v1
+            kind: Secret
+            metadata:
+              name: argo-server-sso
+            type: Opaque
+            stringData:
+              client-id: argo-workflows
+              client-secret: JPxJ7YzBYAsl8uelN86Wv3gS72OY2p3x
+
+          # --- --- --- --- --- --- --- --- ---
+          # RBAC
+          #
+          - apiVersion: rbac.authorization.k8s.io/v1
+            kind: ClusterRole
+            metadata:
+              name: argo-workflows-readonly-role
+            rules:
+              - apiGroups:
+                  - ""
+                resources:
+                  - pods
+                verbs:
+                  - get
+                  - watch
+                  - patch
+              - apiGroups:
+                  - ""
+                resources:
+                  - pods/log
+                verbs:
+                  - get
+                  - watch
+
+          - apiVersion: v1
+            kind: ServiceAccount
+            metadata:
+              name: argo-workflows-readonly-sa
+              annotations:
+                # The rule is an expression used to determine if this service account 
+                # should be used. 
+                # * `groups` - an array of the OIDC groups
+                # * `iss` - the issuer ("argo-server")
+                # * `sub` - the subject (typically the username)
+                # Must evaluate to a boolean. 
+                # If you want an account to be the default to use, this rule can be "true".
+                # Details of the expression language are available in
+                # https://github.com/antonmedv/expr/blob/master/docs/Language-Definition.md.
+                workflows.argoproj.io/rbac-rule: "<groupId>"
+                # The precedence is used to determine which service account to use whe
+                # Precedence is an integer. It may be negative. If omitted, it defaults to "0".
+                # Numerically higher values have higher precedence (not lower, which maybe 
+                # counter-intuitive to you).
+                # If two rules match and have the same precedence, then which one used will 
+                # be arbitrary.
+                workflows.argoproj.io/rbac-rule-precedence: "1"
+
+          - apiVersion: rbac.authorization.k8s.io/v1
+            kind: ClusterRoleBinding
+            metadata:
+              name: argo-workflows-readonly-rb
+            roleRef:
+              apiGroup: rbac.authorization.k8s.io
+              kind: ClusterRole
+              name: argo-workflows-readonly-role
+            subjects:
+              - kind: ServiceAccount
+                name: argo-workflows-readonly-sa
+                namespace: workflow
+
+          # --- --- --- --- --- --- --- --- ---
+          # MySQL Server
+          #
+          - apiVersion: v1
+            kind: Secret
+            metadata:
+              name: argo-mysql-secret
+            type: Opaque
+            stringData:
+              MYSQL_DATABASE: argo
+              MYSQL_USER: argo
+              MYSQL_PASSWORD: Argo-Workflows
+
+          - apiVersion: v1
+            kind: ConfigMap
+            metadata:
+              name: mysql-cnf-mp
+            data:
+              mysql.cnf: ''
+
+          - apiVersion: v1
+            kind: Service
+            metadata:
+              name: workflow-argo-workflows-mysql-server
+              labels:
+                app.kubernetes.io/component: server
+                app.kubernetes.io/instance: mysql-server
+            spec:
+              selector:
+                app.kubernetes.io/component: server
+                app.kubernetes.io/instance: mysql-server
+              type: ClusterIP
+              ports:
+                - name: mysql
+                  port: 3306
+                  protocol: TCP
+                  targetPort: mysql
+                  nodePort: null
+
+          - apiVersion: apps/v1
+            kind: StatefulSet
+            metadata:
+              name: workflow-argo-workflows-mysql-server
+              labels:
+                app.kubernetes.io/component: server
+                app.kubernetes.io/instance: mysql-server
+            spec:
+              serviceName: mysql-server
+              replicas: 1
+              updateStrategy:
+                type: RollingUpdate
+              selector:
+                matchLabels:
+                  app.kubernetes.io/component: server
+                  app.kubernetes.io/instance: mysql-server
+              template:
+                metadata:
+                  labels:
+                    app.kubernetes.io/component: server
+                    app.kubernetes.io/instance: mysql-server
+                spec:
+                  containers:
+                    - name: mysql
+                      image: amd64/mysql:8.0.35-bullseye
+                      args:
+                        - --character-set-server=utf8mb4
+                        - --collation-server=utf8mb4_unicode_ci
+                      env:
+                        - name: MYSQL_ROOT_PASSWORD
+                          value: MySQL12345
+                      envFrom:
+                        - secretRef:
+                            name: argo-mysql-secret
+                      ports:
+                        - name: mysql
+                          containerPort: 3306
+                      volumeMounts:
+                        - name: mysql-cnf-vol
+                          mountPath: /etc/mysql/conf.d/mysql.cnf
+                          subPath: mysql.cnf
+                        - name: data
+                          mountPath: /var/lib/mysql
+                  volumes:
+                    - name: mysql-cnf-vol
+                      configMap:
+                        name: mysql-cnf-mp
+                        items:
+                          - key: mysql.cnf
+                            path: mysql.cnf
+              volumeClaimTemplates:
+                - metadata:
+                    name: data
+                  spec:
+                    resources:
+                      requests:
+                        storage: 4Gi
+                    accessModes:
+                      - ReadWriteOnce
+                    persistentVolumeReclaimPolicy: Recycle
