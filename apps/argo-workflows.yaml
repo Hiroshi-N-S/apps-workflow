@@ -58,8 +58,7 @@ spec:
             - name: BASE_HREF
               value: "/argo/"
           authModes:
-            - server
-            # - sso
+            - sso
           serviceType: ClusterIP
           servicePort: 2746
           servicePortName: https
@@ -82,8 +81,11 @@ spec:
                     name: workflow-argo-workflows-server
                     port:
                       name: https
+          clusterWorkflowTemplates:
+            enabled: true
+            enableEditing: false
           sso:
-            enabled: false
+            enabled: true
             issuer: http://mysticstorage.local:8080/realms/devops
             clientId:
               name: argo-server-sso
@@ -98,7 +100,8 @@ spec:
               - openid
               - profile
               - roles
-            customGroupClaimName: roles
+              - groups
+            customGroupClaimName: groups
             userInfoPath: /protocol/openid-connect/userinfo
             insecureSkipVerify: true
             filterGroupsRegex:
@@ -151,62 +154,70 @@ spec:
 
           # --- --- --- --- --- --- --- --- ---
           # RBAC
-          #
-          - apiVersion: rbac.authorization.k8s.io/v1
-            kind: ClusterRole
-            metadata:
-              name: argo-workflows-readonly-role
-            rules:
-              - apiGroups:
-                  - ""
-                resources:
-                  - pods
-                verbs:
-                  - get
-                  - watch
-                  - patch
-              - apiGroups:
-                  - ""
-                resources:
-                  - pods/log
-                verbs:
-                  - get
-                  - watch
+          #   ref: https://argo-workflows.readthedocs.io/en/latest/service-account-secrets/
+
+          # --- --- --- --- --- --- ---
+          # readonly role
 
           - apiVersion: v1
             kind: ServiceAccount
             metadata:
-              name: argo-workflows-readonly-sa
+              name: argo-workflows-readonly
               annotations:
-                # The rule is an expression used to determine if this service account 
-                # should be used. 
-                # * `groups` - an array of the OIDC groups
-                # * `iss` - the issuer ("argo-server")
-                # * `sub` - the subject (typically the username)
-                # Must evaluate to a boolean. 
-                # If you want an account to be the default to use, this rule can be "true".
-                # Details of the expression language are available in
-                # https://github.com/antonmedv/expr/blob/master/docs/Language-Definition.md.
-                workflows.argoproj.io/rbac-rule: "<groupId>"
-                # The precedence is used to determine which service account to use whe
-                # Precedence is an integer. It may be negative. If omitted, it defaults to "0".
-                # Numerically higher values have higher precedence (not lower, which maybe 
-                # counter-intuitive to you).
-                # If two rules match and have the same precedence, then which one used will 
-                # be arbitrary.
-                workflows.argoproj.io/rbac-rule-precedence: "1"
+                workflows.argoproj.io/rbac-rule: "'argo-workflows-readonly' in groups"
+                workflows.argoproj.io/rbac-rule-precedence: "0"
+
+          - apiVersion: v1
+            kind: Secret
+            metadata:
+              name: argo-workflows-readonly.service-account-token
+              annotations:
+                kubernetes.io/service-account.name: argo-workflows-readonly
+            type: kubernetes.io/service-account-token
 
           - apiVersion: rbac.authorization.k8s.io/v1
             kind: ClusterRoleBinding
             metadata:
-              name: argo-workflows-readonly-rb
+              name: argo-workflows-readonly-server-cluster-template
             roleRef:
               apiGroup: rbac.authorization.k8s.io
               kind: ClusterRole
-              name: argo-workflows-readonly-role
+              name: workflow-argo-workflows-server-cluster-template
             subjects:
               - kind: ServiceAccount
-                name: argo-workflows-readonly-sa
+                name: argo-workflows-readonly
+                namespace: workflow
+
+          # --- --- --- --- --- --- ---
+          # admin role
+
+          - apiVersion: v1
+            kind: ServiceAccount
+            metadata:
+              name: argo-workflows-admin
+              annotations:
+                workflows.argoproj.io/rbac-rule: "'argo-workflows-admin' in groups"
+                workflows.argoproj.io/rbac-rule-precedence: "1"
+
+          - apiVersion: v1
+            kind: Secret
+            metadata:
+              name: argo-workflows-admin.service-account-token
+              annotations:
+                kubernetes.io/service-account.name: argo-workflows-admin
+            type: kubernetes.io/service-account-token
+
+          - apiVersion: rbac.authorization.k8s.io/v1
+            kind: ClusterRoleBinding
+            metadata:
+              name: argo-workflows-admin-server
+            roleRef:
+              apiGroup: rbac.authorization.k8s.io
+              kind: ClusterRole
+              name: workflow-argo-workflows-server
+            subjects:
+              - kind: ServiceAccount
+                name: argo-workflows-admin
                 namespace: workflow
 
           # --- --- --- --- --- --- --- --- ---
